@@ -1,0 +1,380 @@
+---
+title: "Metaplots using metadata"
+author: Alex Albright
+date: June 28 2021
+output: html_notebook
+---
+
+# Getting NBER metadata
+
+NBER folks recommend downloading [this .tab file](https://data.nber.org/nber-wp-logs/working_papers.tab).
+
+You can also download NBER metadata as .txt files from [here](https://www2.nber.org/wp_metadata).
+(The issue with the .txt files is that they often are missing dates, which I want for a lot of plots.) 
+
+I'll use the tab file and then use the authors text file for when I get into author demographics. 
+
+I `fread` directly from the NBER URLs. I'm doing this on 6/28/21, but if you're running this later, the output will be slightly different since more papers will be included in the raw data. 
+
+```{r}
+library(data.table);library(predictrace);library(tidyverse);library(tidyr)
+library(tidytext);library(quickpalette);library(viridis)
+library(usmap);library(socviz)
+library(ggraph);library(igraph)
+library(lubridate);library(patchwork)
+
+nber<-fread("https://data.nber.org/nber-wp-logs/working_papers.tab",  quote = "")%>%
+  filter(abstract!="NULL")
+```
+
+```{r}
+nber%>%select(paper)%>%distinct()%>%nrow()
+```
+
+There are 30,488 papers in the NBER data.
+
+# Most popular words in economics papers?
+
+```{r}
+paper_words <- nber %>%
+  unnest_tokens(word, abstract) %>%
+  filter(!word %in% stop_words$word)%>%
+  count(word, sort = TRUE)%>%
+  slice_max(n, n = 10) 
+
+tot<-nrow(nber)
+
+paper_words%>%mutate(tot=tot)%>%
+  mutate(`fraction of papers`=round(n/tot,2))%>%select(1,4)%>%knitr::kable("markdown")
+```
+
+# Data vs models?
+
+I use the same word searches as [Currie, Kleven, and Zwiers (2020) ](https://www.aeaweb.org/articles?id=10.1257/pandp.20201058).^[See Table A.I. in their online appendix.]
+
+```{r}
+nber<-nber%>%
+  mutate(ex=(str_detect(abstract, "exploit")),
+         dd=str_detect(abstract, "Difference in Diff|Difference in diff|difference in diff|Difference-in-Diff|Difference-in-diff|difference-in-diff|Differences in Diff|Differences in diff|differences in diff|Differences-in-Diff|Differences-in-diff|differences-in-diff|diff-in-diff|d-in-d|DiD"),
+         event=str_detect(abstract, "event study|event-study"),
+         iv=str_detect(abstract, "Instrumental Variable|Instrumental variable|instrumental variable|Instrumental-Variable|Instrumental-variable|instrumental-variable|Two Stage Least Squares|Two stage least squares|two
+stage least squares|2SLS|TSLS|valid instrument|exogenous instrument|IV Estimat|IV estimat|IV-estimat|IV Specification|IV specification|IV-specification|IV Regression|IV regression|IV-regression|IV Strateg|IV strateg|IV-strateg|we instrument|I instrument|paper instruments|exclusion restriction|weak first stage|simulated instrument"),
+        rd=str_detect(abstract, "Regression Discontinuit|Regression discontinuit|regression discontinuit|Regression-discontinuity|regression-discontinuity|Regression Kink|Regression kink|regression kink|RD Design|RD design|RD-design|RD Estimat|RD estimat|RD-estimat|RD Model|RD model|RD-model|RD Regression|RD regression|RD-regression|RD Coefficient|RD coefficient|RD-coefficient|RK Design|RK design|RK-Design|RK-design|RKD"),
+         data=str_detect(abstract, "data"),
+         model=str_detect(abstract, "model"))
+```
+
+Note: I use the {ggtext} package to color words in the title and subtitle.
+
+```{r}
+library(ggtext)
+
+nber%>%mutate(year=year(ymd(public_date)))%>%
+  group_by(year)%>%filter(year>=1980)%>%
+  summarise(data=mean(data==T),
+            model=mean(model==T))%>%
+  pivot_longer(2:3)%>%
+  ggplot(aes(x=year, y=value, color=name, linetype=name, shape=name))+
+  geom_line()+geom_point()+
+  scale_color_manual(values=c("#009E73", "gray40"), name="")+
+  labs(x="", y="", caption="Data: NBER working paper metadata. Plot: Alex Albright.",
+       title="<span style = 'font-size:22pt'><span style = 'color:#009E73;'>Data</span> has overtaken <span style = 'color:gray40;'>Models</span></span><br> % of abstracts including the words <span style = 'color:#009E73;'>'data'</span> or <span style = 'color:gray40;'>'model'</span>")+
+  scale_y_continuous(labels=scales::percent_format(accuracy = 1), breaks=seq(0.2,.6,.1), limits=c(0.18,0.5))+
+  theme_minimal(base_family = "Palatino", base_size = 14)+theme(plot.title.position = "plot", legend.position = "none",
+                                                                plot.title = element_markdown())
+ggsave('graphs/modelvdata1.png', dpi=250, width=7, height=5)
+```
+
+# Most popular quasi experimental methods?
+
+```{r}
+library(wesanderson)
+
+nber%>%mutate(year=year(ymd(public_date)))%>%
+  group_by(year)%>%filter(year>=1980)%>%
+  summarise(IV=mean(iv==T),
+            DD=mean(dd==T),
+            RD=mean(rd==T))%>%
+  pivot_longer(2:4)%>%
+  ggplot(aes(x=year, y=value, color=name, linetype=name, shape=name))+
+  labs(y="", x="", caption="Data: NBER working paper metadata. Plot: Alex Albright.")+
+  geom_point()+
+  scale_y_continuous(labels=scales::percent_format(accuracy = 1))+
+  geom_line()+ggtitle("DD overtakes IV as quasi-experimental queen",
+                      subtitle="% of abstracts using quasi-experimental method words")+
+  scale_color_manual(values=wes_palette("Darjeeling1", 4, type="discrete"))+
+  theme_minimal(base_family = "Palatino", base_size=15)+
+  theme(plot.title.position = "plot", legend.title = element_blank(),
+        legend.position = "right")
+
+ggsave('graphs/quasi-exp-methods1.png', dpi=250, width=7.5, height=5)
+```
+
+# Using the word 'exploit'
+
+For more n-gram examples see [Text Mining with R](https://www.tidytextmining.com/ngrams.html)
+
+```{r}
+time<-nber%>%mutate(year=year(ymd(public_date)))%>%
+  group_by(year)%>%filter(year>=1980)%>%
+  summarise(exp=mean(ex==T))%>%
+  ggplot(aes(x=year, y=exp))+
+  geom_line()+geom_point()+
+  geom_line()+ggtitle("% abstracts that use the word 'exploit'")+labs(x="", y="")+
+  scale_y_continuous(labels=scales::percent_format(accuracy = 1), breaks=seq(0,.08,.02), limits=c(0,0.08))+
+  theme_minimal(base_family = "Palatino", base_size = 14)+theme(plot.title.position = "plot")
+
+abs_bi <- nber %>%
+  unnest_tokens(bigram, abstract, token = "ngrams", n = 3)
+
+abs_bi%>%
+  count(bigram, sort = TRUE)
+
+bigrams_separated <- abs_bi %>%
+  separate(bigram, c("word1", "word2", "word3"), sep = " ")
+
+bigrams_filtered <- bigrams_separated %>%
+  filter(str_detect(word1, "exploit"))
+
+# new bigram counts:
+bigram_counts <- bigrams_filtered %>% 
+  mutate(word1="exploit")%>%
+  mutate(word2=if_else(word2=="the"|word2=="an"|word2=="a"|word2=="this"|word2=="of"|word2=="these"|word2=="their", word3, word2))%>%
+  select(word1, word2)%>%
+  count(word1, word2, sort = TRUE)
+  
+bigram_graph <- bigram_counts %>%
+  filter(n >= 15) %>%
+  graph_from_data_frame()
+
+set.seed(2020)
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+net<-ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name, family="Palatino"), vjust = 0, hjust = 1) +
+  theme_void(base_family = "Palatino", base_size = 14)+
+  ggtitle("Most common words following 'exploit'")+
+  theme(plot.title.position = "plot")
+
+time/net+
+  plot_annotation(title = "Economists love 'exploiting' variation",
+                    theme = theme(plot.title = element_text(size = 22, family="Palatino"))) +
+  plot_annotation(caption = 'Ignoring generic words: a, an, this, these, the, of, their\nData: NBER working paper metadata. Plot: Alex Albright.',
+                    theme = theme(plot.caption = element_text(size = 13, family="Palatino"))) 
+  
+
+ggsave('graphs/econ-exploit1.png', dpi=250, width=9, height=9)
+```
+
+# Econ paper title conventions
+
+```{r}
+nber$q=if_else(grepl("\\?", nber$title), 1, 0)
+nber$colon=if_else(grepl("\\:", nber$title), 1, 0)
+
+nber%>%summarise(`title w/ question`=mean(q==1), 
+                  `title w/ colon`=mean(colon==1), 
+                 `title w/ question or colon`=mean(q==1 | colon==1),
+                  `title w/ question and colon`=mean(q==1 & colon==1))%>%
+  pivot_longer(1:4)%>%mutate(value=round(value,2))%>%
+  rename(convention=name, `fraction of papers`=value)%>%knitr::kable("markdown")
+```
+
+34% use :s and 13% use question marks! 45% do one of the two.
+
+# Common bigrams
+
+```{r}
+abs_bi <- nber %>%
+  unnest_tokens(bigram, abstract, token = "ngrams", n = 2)
+
+bigrams_separated <- abs_bi %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word)
+
+# new bigram counts:
+bigram_counts <- bigrams_filtered %>% 
+  count(word1, word2, sort = TRUE)
+
+#make graph
+bigram_graph <- bigram_counts %>%
+  filter(!is.na(word1))%>%
+  filter(n >= 500) %>%
+  graph_from_data_frame()
+
+set.seed(2020)
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name, family="Palatino"), vjust = 0, hjust = 1) +
+  theme_void()+
+  ggtitle("Common bigrams in NBER WP abstracts", subtitle="Limit to bigrams with 500+ observations")+
+  labs(caption="Excluding stop words.\nData: NBER working paper metadata. Plot: Alex Albright.")+
+  theme(text=element_text(family="Palatino", size = 20))
+  
+ggsave('graphs/bigrams1.png', dpi=250, width=10.3, height=7)
+```
+
+# Who are the authors?
+
+Use [this {predict race}](https://cran.r-project.org/web/packages/predictrace/vignettes/Predict-race-of-surname.html) package from Jacob Kaplan to get race and gender from the author names.
+
+Let's use the cleaner author .txt data but only keep those that link to the large .tab file, so we are pulling from the same universe of papers.
+
+```{r}
+auths<-fread("http://www2.nber.org/wp_metadata/txt/auths.txt", quote = "")
+
+papers<-nber%>%select(paper, public_date)%>%distinct()
+authors<-inner_join(auths, papers)
+```
+There are 68,247 author-paper observations.
+
+```{r}
+#separate out name into first and last
+authors<-authors%>%
+  mutate(lastname=word(name, -1), firstname=word(name, -2))
+
+df<-authors%>%
+  mutate(firstname_race=predict_race(firstname, probability = F, surname = F)$likely_race,
+         lastname_race=predict_race(lastname, probability = F, surname = T)$likely_race,
+         gender=predict_gender(firstname, probability = F)$likely_gender)
+```
+
+Make plots.
+
+```{r}
+library(lubridate)
+
+# RACE
+
+dfr<-df%>%mutate(year=year(ymd(public_date)))%>%filter(year>=1980)%>%
+  group_by(year)%>%filter(!is.na(gender) & !is.na(lastname_race))%>%
+  summarise(`White`=mean(lastname_race=="white"),
+            `Black`=mean(lastname_race=="black"),
+            `Asian`=mean(lastname_race=="asian"),
+            `Hispanic`=mean(lastname_race=="hispanic"),
+            `Native`=mean(lastname_race=="american indian"))%>%pivot_longer(2:6)
+
+race<-dfr%>%ggplot(aes(x=year, y=value, fill=name))+
+  geom_area()+scale_fill_manual(values=c("#A6CEE3", "#B2DF8A", "#F89A99", "#FABF6F", "#CAB2D6"), name="")+
+  scale_y_continuous(labels=scales::percent)+theme_minimal(base_family = "Palatino")+
+  theme(plot.title.position = "plot")+
+  ggtitle("Race* of NBER Paper Authors")+
+  labs(x="", y="", caption="*Predicted from last name using Census data.\nOmitting authors without predictions.")
+
+#GENDER
+
+dfg<-df%>%mutate(year=year(ymd(public_date)))%>%filter(year>=1980)%>%
+  group_by(year)%>%filter(!is.na(gender) & !is.na(lastname_race))%>%
+  summarise(`Men`=mean(gender=="male"),
+            `Women`=mean(gender=="female"))%>%pivot_longer(2:3)
+
+gender<-dfg%>%ggplot(aes(x=year, y=value, fill=name))+
+  geom_area()+scale_fill_manual(values=c("gray80", "gray30"), name="")+
+  scale_y_continuous(labels=scales::percent)+theme_minimal(base_family = "Palatino")+
+  theme(plot.title.position = "plot")+
+  ggtitle("Gender* of NBER Paper Authors")+
+  labs(x="", y="", caption="*Predicted from first name using\n US Social Security Admin Data.\nOmitting authors without predictions.")
+
+#GENDER AND RACE
+
+dfgr<-df%>%mutate(year=year(ymd(public_date)))%>%filter(year>=1980)%>%
+  group_by(year)%>%filter(!is.na(gender) & !is.na(lastname_race))%>%
+  summarise(`White Men`=mean(gender=="male" & lastname_race=="white"),
+            `White Women`=mean(gender=="female" & lastname_race=="white"),
+            `Black Women`=mean(gender=="female" & lastname_race=="black"),
+            `Black Men`=mean(gender=="male" & lastname_race=="black"),
+            `Asian Women`=mean(gender=="female" & lastname_race=="asian"),
+            `Asian Men`=mean(gender=="male" & lastname_race=="asian"),
+            `Hispanic Women`=mean(gender=="female" & lastname_race=="hispanic"),
+            `Hispanic Men`=mean(gender=="male" & lastname_race=="hispanic"),
+            `Native Women`=mean(gender=="female" & lastname_race=="american indian"),
+            `Native Men`=mean(gender=="male" & lastname_race=="american indian"))%>%pivot_longer(2:11)
+
+rg<-dfgr%>%ggplot(aes(x=year, y=value, fill=name))+
+  geom_area()+scale_fill_brewer(palette="Paired", name = "")+
+  scale_y_continuous(labels=scales::percent)+theme_minimal(base_family = "Palatino")+theme(plot.title.position = "plot")+
+  ggtitle("Gender and Race* of NBER Paper Authors")+
+  labs(x="", y="", caption="*Again, using census and SSA to predict race and gender, respectively.\nOmitting observations without predictions")
+
+#Put them all together
+
+(race+gender)/rg+plot_annotation(title = 'Demographics of NBER Paper Authors, 1980-2021',
+                    theme = theme(plot.title = element_text(size = 22, family="Palatino"))) +
+  plot_annotation(caption = 'Data: NBER working paper metadata. Plot: Alex Albright.',
+                    theme = theme(plot.caption = element_text(size = 13, family="Palatino"))) 
+  
+
+ggsave('graphs/authors-nber1.png', dpi=250, width=8, height=8)
+```
+
+# Where do econs write about?
+
+Not a lot of counties mentioned. Focus on US states.
+
+```{r}
+paper_words <- nber %>%
+  unnest_tokens(word, abstract) %>%
+  count(word, sort = TRUE)
+
+states<-election%>%select(state)%>%
+  mutate(state=tolower(state))%>%distinct()%>%
+  filter(state!="district of columbia")
+
+df<-paper_words%>%
+  filter(word %in% states$state)%>%mutate(state=word)
+
+paper_2words <- nber %>%
+  unnest_tokens(bigram, abstract, token = "ngrams", n = 2)%>%
+  count(bigram, sort = TRUE)
+
+df2<-paper_2words%>%
+  filter(bigram %in% states$state)%>%mutate(state=bigram)
+
+dff<-bind_rows(df, df2)
+```
+
+plot count and count per million in population
+
+```{r}
+statepop$state<-tolower(statepop$full)
+dff<-full_join(dff, statepop)
+
+dff<-dff%>%
+  mutate(n=replace_na(n, 0))%>%
+  mutate(popm=pop_2015/1000000)%>%
+  mutate(nperm=n/popm)
+
+library(statebins)
+#the united states of nber papers
+
+a<-statebins(state_data = dff, state_col = "full", value_col = "n", 
+          ggplot2_scale_function = viridis::scale_fill_viridis)+
+  theme_void(base_family = "Palatino", base_size = 14)+ theme(legend.title = element_blank())+
+  ggtitle("# of NBER abstract mentions")
+
+b<-statebins(state_data = dff, state_col = "full", value_col = "nperm", 
+          ggplot2_scale_function = viridis::scale_fill_viridis)+
+  theme_void(base_family = "Palatino", base_size = 14)+ theme(legend.title = element_blank())+ #plot.title = element_text(hjust = 0.5))+
+  ggtitle("# of NBER abstract mentions per million residents*")+
+  labs(caption="*population #s from 2015")
+
+library(patchwork)
+a/b+
+  plot_annotation(title = 'The United States of NBER Papers',
+                    theme = theme(plot.title = element_text(size = 25, family="Palatino"))) +
+  plot_annotation(caption = 'Data: NBER working paper metadata. Plot: Alex Albright.',
+                    theme = theme(plot.caption = element_text(size = 16, family="Palatino"))) 
+  
+
+ggsave('graphs/states-nber1.png', dpi=250, width=7, height=10)
+```
