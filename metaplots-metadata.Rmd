@@ -60,6 +60,7 @@ nber<-nber%>%
          iv=str_detect(abstract, "Instrumental Variable|Instrumental variable|instrumental variable|Instrumental-Variable|Instrumental-variable|instrumental-variable|Two Stage Least Squares|Two stage least squares|two
 stage least squares|2SLS|TSLS|valid instrument|exogenous instrument|IV Estimat|IV estimat|IV-estimat|IV Specification|IV specification|IV-specification|IV Regression|IV regression|IV-regression|IV Strateg|IV strateg|IV-strateg|we instrument|I instrument|paper instruments|exclusion restriction|weak first stage|simulated instrument"),
         rd=str_detect(abstract, "Regression Discontinuit|Regression discontinuit|regression discontinuit|Regression-discontinuity|regression-discontinuity|Regression Kink|Regression kink|regression kink|RD Design|RD design|RD-design|RD Estimat|RD estimat|RD-estimat|RD Model|RD model|RD-model|RD Regression|RD regression|RD-regression|RD Coefficient|RD coefficient|RD-coefficient|RK Design|RK design|RK-Design|RK-design|RKD"),
+         covid=str_detect(abstract, "covid|coronavirus|COVID|Covid|CORONAVIRUS"),
          data=str_detect(abstract, "data"),
          model=str_detect(abstract, "model"))
 ```
@@ -167,6 +168,22 @@ time/net+
   
 
 ggsave('graphs/econ-exploit2.png', dpi=250, width=9.5, height=9)
+```
+
+# Covid plot
+
+```{r}
+nber%>%mutate(my=floor_date(ymd(public_date), "month"))%>%
+  group_by(my)%>%filter(my>="2018-01-01")%>%
+  summarise(covid=mean(covid==T))%>%
+  ggplot(aes(x=my, y=covid))+
+  geom_line()+geom_point()+labs(x="", y="", caption = "Data: NBER working paper metadata. Plot: Alex Albright.")+
+  ggtitle("% of abstracts that include 'covid/coronavirus'")+
+  scale_x_date()+
+  scale_y_continuous(labels=scales::percent_format(accuracy = 1), breaks=seq(0,.3,.05), limits=c(0,0.3))+
+  theme_minimal(base_family = "Palatino", base_size = 14)+theme(plot.title.position = "plot")
+
+ggsave('graphs/covid1.png', dpi=250, width=7, height=4)
 ```
 
 # Econ paper title conventions
