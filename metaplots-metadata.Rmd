@@ -23,7 +23,8 @@ library(usmap);library(socviz)
 library(ggraph);library(igraph)
 library(lubridate);library(patchwork)
 
-nber<-fread("https://data.nber.org/nber-wp-logs/working_papers.tab",  quote = "")%>%
+nber<-#fread("nber-data/working_papers.tab",  quote = "")%>%
+  fread("https://data.nber.org/nber-wp-logs/working_papers.tab",  quote = "")%>%
   filter(abstract!="NULL")
 ```
 
@@ -225,7 +226,7 @@ bigram_graph <- bigram_counts %>%
   filter(n >= 500) %>%
   graph_from_data_frame()
 
-set.seed(2020)
+set.seed(2010)
 a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
 
 ggraph(bigram_graph, layout = "fr") +
@@ -238,7 +239,7 @@ ggraph(bigram_graph, layout = "fr") +
   labs(caption="Excluding stop words.\nData: NBER working paper metadata. Plot: Alex Albright.")+
   theme(text=element_text(family="Palatino", size = 20))
   
-ggsave('graphs/bigrams1.png', dpi=250, width=10.3, height=7)
+ggsave('graphs/bigrams2.png', dpi=250, width=10.5, height=7)
 ```
 
 # Who are the authors?
@@ -248,14 +249,12 @@ Use [this {predict race}](https://cran.r-project.org/web/packages/predictrace/vi
 Let's use the cleaner author .txt data but only keep those that link to the large .tab file, so we are pulling from the same universe of papers.
 
 ```{r}
-auths<-fread("http://www2.nber.org/wp_metadata/txt/auths.txt", quote = "")
+auths<-#fread("nber-data/auths.txt", quote="")
+  fread("http://www2.nber.org/wp_metadata/txt/auths.txt", quote = "")
 
 papers<-nber%>%select(paper, public_date)%>%distinct()
 authors<-inner_join(auths, papers)
-```
-There are 68,247 author-paper observations.
 
-```{r}
 #separate out name into first and last
 authors<-authors%>%
   mutate(lastname=word(name, -1), firstname=word(name, -2))
@@ -266,14 +265,40 @@ df<-authors%>%
          gender=predict_gender(firstname, probability = F)$likely_gender)
 ```
 
-Make plots.
+Not weighting by paper: unique count of authors per year
+
+```{r}
+df<-df%>%
+  mutate(year=year(ymd(public_date)))%>%
+  select(-c(paper, public_date))%>%distinct()
+```
+
+In 2020, 
+
+what % nonwhite authors? 30%
+
+```{r}
+nrow(subset(df, year==2020 & !is.na(lastname_race) & (lastname_race!="white")))/nrow(subset(df, year==2020 &!is.na(lastname_race)))
+```
+
+what % black/hispanic/native american authors? 6% 
+
+```{r}
+nrow(subset(df, year==2020 & !is.na(lastname_race) & (lastname_race=="black" | lastname_race=="hispanic" | lastname_race=="american indian")))/nrow(subset(df, year==2020 &!is.na(lastname_race)))
+```
+
+what % women? 28%
+
+```{r}
+nrow(subset(df, year==2020 & gender=="female" &!is.na(gender)))/nrow(subset(df, year==2020 &!is.na(gender)))
+```
 
 ```{r}
 library(lubridate)
 
 # RACE
 
-dfr<-df%>%mutate(year=year(ymd(public_date)))%>%filter(year>=1980)%>%
+dfr<-df%>%filter(year>=1980)%>%
   group_by(year)%>%filter(!is.na(gender) & !is.na(lastname_race))%>%
   summarise(`White`=mean(lastname_race=="white"),
             `Black`=mean(lastname_race=="black"),
@@ -290,7 +315,7 @@ race<-dfr%>%ggplot(aes(x=year, y=value, fill=name))+
 
 #GENDER
 
-dfg<-df%>%mutate(year=year(ymd(public_date)))%>%filter(year>=1980)%>%
+dfg<-df%>%filter(year>=1980)%>%
   group_by(year)%>%filter(!is.na(gender) & !is.na(lastname_race))%>%
   summarise(`Men`=mean(gender=="male"),
             `Women`=mean(gender=="female"))%>%pivot_longer(2:3)
@@ -304,7 +329,7 @@ gender<-dfg%>%ggplot(aes(x=year, y=value, fill=name))+
 
 #GENDER AND RACE
 
-dfgr<-df%>%mutate(year=year(ymd(public_date)))%>%filter(year>=1980)%>%
+dfgr<-df%>%filter(year>=1980)%>%
   group_by(year)%>%filter(!is.na(gender) & !is.na(lastname_race))%>%
   summarise(`White Men`=mean(gender=="male" & lastname_race=="white"),
             `White Women`=mean(gender=="female" & lastname_race=="white"),
@@ -331,7 +356,7 @@ rg<-dfgr%>%ggplot(aes(x=year, y=value, fill=name))+
                     theme = theme(plot.caption = element_text(size = 13, family="Palatino"))) 
   
 
-ggsave('graphs/authors-nber1.png', dpi=250, width=8, height=8)
+ggsave('graphs/authors-nber2.png', dpi=250, width=8, height=8)
 ```
 
 # Where do econs write about?
